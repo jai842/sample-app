@@ -1,1 +1,1 @@
-kubernetes to deploy app
+kubernetes to deploy application as it is automatic orchestration.
