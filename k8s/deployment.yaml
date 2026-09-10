@@ -19,6 +19,6 @@ spec:
     spec:
       containers:
         - name: nginx
-          image: jai842/nginx-test:v1.0
+          image: jai842/sample-app:latest
           ports:
             - containerPort: 80
