@@ -13,19 +13,11 @@ jobs:
 
     steps:
 
-      # 1. Checkout source code from GitHub
+      # 1. Checkout source code
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. Add Docker Desktop to PATH
-      - name: Add Docker to PATH
-        shell: powershell
-        run: |
-          $dockerPath = "C:\Users\BoggalaSaiJayaram\AppData\Local\Programs\DockerDesktop\resources\bin"
-          Write-Host "Adding Docker path: $dockerPath"
-          Add-Content -Path $env:GITHUB_PATH -Value $dockerPath
-
-      # 3. Verify Docker
+      # 2. Verify Docker
       - name: Verify Docker
         shell: powershell
         run: |
@@ -35,46 +27,76 @@ jobs:
           Write-Host "Docker version:"
           docker version
 
-      # 4. Login to Docker Hub
+      # 3. Login to Docker Hub
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 5. Build Docker image
+      # 4. Build Docker image
       - name: Build Docker image
         shell: powershell
         run: |
           docker build -t jai842/sample-app:latest .
 
-      # 6. Push Docker image to Docker Hub
+      # 5. Push Docker image to Docker Hub
       - name: Push Docker image
         shell: powershell
         run: |
           docker push jai842/sample-app:latest
 
-      # 7. Deploy application to Docker Desktop Kubernetes
+      # 6. Configure Docker Desktop Kubernetes
+      - name: Configure Kubernetes
+        shell: powershell
+        run: |
+          $kubeConfig = "C:\Users\BoggalaSaiJayaram\.kube\config"
+
+          Write-Host "Checking kubeconfig..."
+          
+          if (!(Test-Path $kubeConfig)) {
+              Write-Error "Kubeconfig not found: $kubeConfig"
+              exit 1
+          }
+
+          Write-Host "Kubeconfig found."
+          
+          $env:KUBECONFIG = $kubeConfig
+          
+          Add-Content -Path $env:GITHUB_ENV -Value "KUBECONFIG=$kubeConfig"
+
+          Write-Host "Current Kubernetes context:"
+          kubectl config current-context
+
+          Write-Host "Kubernetes nodes:"
+          kubectl get nodes
+
+      # 7. Deploy Kubernetes Deployment
       - name: Deploy to Kubernetes
         shell: powershell
         run: |
           kubectl apply -f k8s/deployment.yaml
+
+      # 8. Deploy Kubernetes Service
+      - name: Deploy Kubernetes Service
+        shell: powershell
+        run: |
           kubectl apply -f k8s/service.yaml
 
-      # 8. Restart deployment to pull the latest image
+      # 9. Restart deployment to pull latest image
       - name: Restart Kubernetes deployment
         shell: powershell
         run: |
           kubectl rollout restart deployment/sample-app
 
-      # 9. Wait for deployment
+      # 10. Wait for deployment
       - name: Wait for deployment
         shell: powershell
         run: |
-          kubectl rollout status deployment/sample-app
+          kubectl rollout status deployment/sample-app --timeout=120s
 
-      # 10. Check Kubernetes resources
-      - name: Check Kubernetes
+      # 11. Check Kubernetes resources
+      - name: Check Kubernetes resources
         shell: powershell
         run: |
           kubectl get deployments
