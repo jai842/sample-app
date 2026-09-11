@@ -13,68 +13,219 @@ jobs:
 
     steps:
 
+      # --------------------------------------------------
       # 1. Checkout GitHub repository
+      # --------------------------------------------------
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. Verify Docker
+
+      # --------------------------------------------------
+      # 2. Define Docker executable
+      # --------------------------------------------------
+      - name: Set Docker path
+        shell: powershell
+        run: |
+          $docker = "C:\Users\BoggalaSaiJayaram\AppData\Local\Programs\DockerDesktop\resources\bin\docker.exe"
+
+          if (!(Test-Path $docker)) {
+              Write-Error "Docker executable not found at $docker"
+              exit 1
+          }
+
+          Write-Host "Docker found:"
+          Write-Host $docker
+
+          Add-Content -Path $env:GITHUB_ENV -Value "DOCKER_EXE=$docker"
+
+
+      # --------------------------------------------------
+      # 3. Verify Docker
+      # --------------------------------------------------
       - name: Verify Docker
         shell: powershell
         run: |
-          Write-Host "Docker location:"
-          where.exe docker
+          Write-Host "Docker executable:"
+          Write-Host $env:DOCKER_EXE
 
-          Write-Host "Docker version:"
-          docker version
+          & $env:DOCKER_EXE version
 
-      # 3. Verify Kubernetes
-      - name: Verify Kubernetes
+
+      # --------------------------------------------------
+      # 4. Login to Docker Hub
+      # --------------------------------------------------
+      - name: Login to Docker Hub
         shell: powershell
         run: |
-          kubectl get nodes
+          $dockerPassword = "${{ secrets.DOCKERHUB_TOKEN }}"
 
-      # 4. Login to Docker Hub
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          $dockerPassword | & $env:DOCKER_EXE login `
+            --username "${{ secrets.DOCKERHUB_USERNAME }}" `
+            --password-stdin
 
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "Docker Hub login failed"
+              exit 1
+          }
+
+          Write-Host "Docker Hub login successful"
+
+
+      # --------------------------------------------------
       # 5. Build Docker image
+      # --------------------------------------------------
       - name: Build Docker image
         shell: powershell
         run: |
-          docker build -t jai842/sample-app:latest .
+          Write-Host "Building Docker image..."
 
-      # 6. Push Docker image
+          & $env:DOCKER_EXE build `
+            -t "jai842/sample-app:latest" `
+            .
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "Docker build failed"
+              exit 1
+          }
+
+          Write-Host "Docker image built successfully"
+
+
+      # --------------------------------------------------
+      # 6. Push Docker image to Docker Hub
+      # --------------------------------------------------
       - name: Push Docker image
         shell: powershell
         run: |
-          docker push jai842/sample-app:latest
+          Write-Host "Pushing image to Docker Hub..."
 
-      # 7. Deploy to Kubernetes
-      - name: Deploy to Kubernetes
+          & $env:DOCKER_EXE push "jai842/sample-app:latest"
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "Docker push failed"
+              exit 1
+          }
+
+          Write-Host "Docker image pushed successfully"
+
+
+      # --------------------------------------------------
+      # 7. Configure Kubernetes
+      # --------------------------------------------------
+      - name: Configure Kubernetes
         shell: powershell
         run: |
+
+          $kubeConfig = "C:\Users\BoggalaSaiJayaram\.kube\config"
+
+          if (!(Test-Path $kubeConfig)) {
+              Write-Error "Kubernetes kubeconfig not found at $kubeConfig"
+              exit 1
+          }
+
+          Write-Host "Kubeconfig found:"
+          Write-Host $kubeConfig
+
+          Add-Content -Path $env:GITHUB_ENV -Value "KUBECONFIG=$kubeConfig"
+
+          Write-Host "Kubernetes context:"
+          kubectl config current-context
+
+          Write-Host "Kubernetes nodes:"
+          kubectl get nodes
+
+
+      # --------------------------------------------------
+      # 8. Deploy Kubernetes Deployment
+      # --------------------------------------------------
+      - name: Deploy Application
+        shell: powershell
+        run: |
+
           kubectl apply -f k8s/deployment.yaml
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "Kubernetes deployment failed"
+              exit 1
+          }
+
+          Write-Host "Kubernetes Deployment applied successfully"
+
+
+      # --------------------------------------------------
+      # 9. Deploy Kubernetes Service
+      # --------------------------------------------------
+      - name: Deploy Service
+        shell: powershell
+        run: |
+
           kubectl apply -f k8s/service.yaml
 
-      # 8. Restart deployment
-      - name: Restart Kubernetes deployment
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "Kubernetes service deployment failed"
+              exit 1
+          }
+
+          Write-Host "Kubernetes Service applied successfully"
+
+
+      # --------------------------------------------------
+      # 10. Restart deployment
+      # --------------------------------------------------
+      - name: Restart Kubernetes Deployment
         shell: powershell
         run: |
+
           kubectl rollout restart deployment/sample-app
 
-      # 9. Wait for deployment
-      - name: Wait for deployment
-        shell: powershell
-        run: |
-          kubectl rollout status deployment/sample-app
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "Kubernetes rollout restart failed"
+              exit 1
+          }
 
-      # 10. Check Kubernetes resources
-      - name: Check Kubernetes resources
+          Write-Host "Deployment restart initiated"
+
+
+      # --------------------------------------------------
+      # 11. Wait for rollout
+      # --------------------------------------------------
+      - name: Wait for Deployment
         shell: powershell
         run: |
+
+          kubectl rollout status deployment/sample-app --timeout=120s
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "Kubernetes rollout failed"
+              exit 1
+          }
+
+          Write-Host "Deployment completed successfully"
+
+
+      # --------------------------------------------------
+      # 12. Check Kubernetes resources
+      # --------------------------------------------------
+      - name: Check Kubernetes Resources
+        shell: powershell
+        run: |
+
+          Write-Host "=============================="
+          Write-Host "DEPLOYMENTS"
+          Write-Host "=============================="
+
           kubectl get deployments
-          kubectl get pods
+
+          Write-Host ""
+          Write-Host "=============================="
+          Write-Host "PODS"
+          Write-Host "=============================="
+
+          kubectl get pods -o wide
+
+          Write-Host ""
+          Write-Host "=============================="
+          Write-Host "SERVICES"
+          Write-Host "=============================="
+
           kubectl get services
