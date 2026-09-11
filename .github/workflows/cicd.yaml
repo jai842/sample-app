@@ -13,35 +13,62 @@ jobs:
 
     steps:
 
+      # --------------------------------------------------
       # 1. Checkout source code
+      # --------------------------------------------------
       - name: Checkout code
         uses: actions/checkout@v4
 
 
-      # 2. Define Docker executable
-      - name: Set Docker path
+      # --------------------------------------------------
+      # 2. Configure Docker PATH
+      # --------------------------------------------------
+      - name: Configure Docker
         shell: powershell
         run: |
-          $docker = "C:\Users\BoggalaSaiJayaram\AppData\Local\Programs\DockerDesktop\resources\bin\docker.exe"
 
-          if (!(Test-Path $docker)) {
+          $dockerPath = "C:\Users\BoggalaSaiJayaram\AppData\Local\Programs\DockerDesktop\resources\bin"
+
+          $dockerExe = "$dockerPath\docker.exe"
+
+          Write-Host "Docker path:"
+          Write-Host $dockerPath
+
+          Write-Host "Docker executable:"
+          Write-Host $dockerExe
+
+          if (!(Test-Path $dockerExe)) {
               Write-Error "Docker executable not found"
               exit 1
           }
 
-          Add-Content -Path $env:GITHUB_ENV -Value "DOCKER_EXE=$docker"
+          # Make Docker available to all following steps
+          Add-Content -Path $env:GITHUB_PATH -Value $dockerPath
 
-          Write-Host "Docker executable found"
+          # Also save the absolute path
+          Add-Content -Path $env:GITHUB_ENV -Value "DOCKER_EXE=$dockerExe"
+
+          Write-Host "Docker configuration completed."
 
 
+      # --------------------------------------------------
       # 3. Verify Docker
+      # --------------------------------------------------
       - name: Verify Docker
         shell: powershell
         run: |
-          & $env:DOCKER_EXE version
+
+          Write-Host "Docker from PATH:"
+          where.exe docker
+
+          Write-Host ""
+          Write-Host "Docker version:"
+          docker version
 
 
+      # --------------------------------------------------
       # 4. Login to Docker Hub
+      # --------------------------------------------------
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -49,24 +76,31 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
 
+      # --------------------------------------------------
       # 5. Build Docker image
+      # --------------------------------------------------
       - name: Build Docker image
         shell: powershell
         run: |
-          & $env:DOCKER_EXE build `
+
+          docker build `
             -t jai842/sample-app:latest `
             .
 
 
-      # 6. Push image to Docker Hub
+      # --------------------------------------------------
+      # 6. Push Docker image
+      # --------------------------------------------------
       - name: Push Docker image
         shell: powershell
         run: |
-          & $env:DOCKER_EXE push `
-            jai842/sample-app:latest
+
+          docker push jai842/sample-app:latest
 
 
+      # --------------------------------------------------
       # 7. Configure Kubernetes
+      # --------------------------------------------------
       - name: Configure Kubernetes
         shell: powershell
         run: |
@@ -74,47 +108,89 @@ jobs:
           $kubeConfig = "C:\Users\BoggalaSaiJayaram\.kube\config"
 
           if (!(Test-Path $kubeConfig)) {
-              Write-Error "Kubeconfig not found"
+              Write-Error "Kubeconfig not found:"
+              Write-Error $kubeConfig
               exit 1
           }
 
+          Write-Host "Kubeconfig found."
+
+          # Make kubeconfig available to following steps
           Add-Content `
             -Path $env:GITHUB_ENV `
             -Value "KUBECONFIG=$kubeConfig"
 
-          Write-Host "Kubernetes context:"
+          Write-Host ""
+          Write-Host "Current Kubernetes context:"
+
           kubectl config current-context
 
+          Write-Host ""
           Write-Host "Kubernetes nodes:"
+
           kubectl get nodes
 
 
-      # 8. Deploy application
-      - name: Deploy to Kubernetes
+      # --------------------------------------------------
+      # 8. Deploy Kubernetes Deployment
+      # --------------------------------------------------
+      - name: Deploy Application
         shell: powershell
         run: |
-          kubectl apply -f k8s/deployment.yaml
-          kubectl apply -f k8s/service.yaml
+
+          kubectl apply `
+            -f k8s/deployment.yaml
 
 
-      # 9. Restart deployment
-      - name: Restart Kubernetes deployment
+      # --------------------------------------------------
+      # 9. Deploy Kubernetes Service
+      # --------------------------------------------------
+      - name: Deploy Service
         shell: powershell
         run: |
+
+          kubectl apply `
+            -f k8s/service.yaml
+
+
+      # --------------------------------------------------
+      # 10. Restart Kubernetes deployment
+      # --------------------------------------------------
+      - name: Restart Deployment
+        shell: powershell
+        run: |
+
           kubectl rollout restart deployment/sample-app
 
 
-      # 10. Wait for deployment
-      - name: Wait for deployment
+      # --------------------------------------------------
+      # 11. Wait for deployment
+      # --------------------------------------------------
+      - name: Wait for Deployment
         shell: powershell
         run: |
+
           kubectl rollout status deployment/sample-app --timeout=120s
 
 
-      # 11. Check Kubernetes
-      - name: Check Kubernetes resources
+      # --------------------------------------------------
+      # 12. Check final Kubernetes resources
+      # --------------------------------------------------
+      - name: Check Kubernetes
         shell: powershell
         run: |
+
+          Write-Host ""
+          Write-Host "========== DEPLOYMENTS =========="
+
           kubectl get deployments
-          kubectl get pods
+
+          Write-Host ""
+          Write-Host "========== PODS =========="
+
+          kubectl get pods -o wide
+
+          Write-Host ""
+          Write-Host "========== SERVICES =========="
+
           kubectl get services
