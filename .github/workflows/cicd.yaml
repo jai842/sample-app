@@ -13,7 +13,7 @@ jobs:
 
     steps:
 
-      # 1. Checkout source code
+      # 1. Checkout GitHub repository
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -27,75 +27,51 @@ jobs:
           Write-Host "Docker version:"
           docker version
 
-      # 3. Login to Docker Hub
+      # 3. Verify Kubernetes
+      - name: Verify Kubernetes
+        shell: powershell
+        run: |
+          kubectl get nodes
+
+      # 4. Login to Docker Hub
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 4. Build Docker image
+      # 5. Build Docker image
       - name: Build Docker image
         shell: powershell
         run: |
           docker build -t jai842/sample-app:latest .
 
-      # 5. Push Docker image to Docker Hub
+      # 6. Push Docker image
       - name: Push Docker image
         shell: powershell
         run: |
           docker push jai842/sample-app:latest
 
-      # 6. Configure Docker Desktop Kubernetes
-      - name: Configure Kubernetes
-        shell: powershell
-        run: |
-          $kubeConfig = "C:\Users\BoggalaSaiJayaram\.kube\config"
-
-          Write-Host "Checking kubeconfig..."
-          
-          if (!(Test-Path $kubeConfig)) {
-              Write-Error "Kubeconfig not found: $kubeConfig"
-              exit 1
-          }
-
-          Write-Host "Kubeconfig found."
-          
-          $env:KUBECONFIG = $kubeConfig
-          
-          Add-Content -Path $env:GITHUB_ENV -Value "KUBECONFIG=$kubeConfig"
-
-          Write-Host "Current Kubernetes context:"
-          kubectl config current-context
-
-          Write-Host "Kubernetes nodes:"
-          kubectl get nodes
-
-      # 7. Deploy Kubernetes Deployment
+      # 7. Deploy to Kubernetes
       - name: Deploy to Kubernetes
         shell: powershell
         run: |
           kubectl apply -f k8s/deployment.yaml
-
-      # 8. Deploy Kubernetes Service
-      - name: Deploy Kubernetes Service
-        shell: powershell
-        run: |
           kubectl apply -f k8s/service.yaml
 
-      # 9. Restart deployment to pull latest image
+      # 8. Restart deployment
       - name: Restart Kubernetes deployment
         shell: powershell
         run: |
           kubectl rollout restart deployment/sample-app
 
-      # 10. Wait for deployment
+      # 9. Wait for deployment
       - name: Wait for deployment
         shell: powershell
         run: |
-          kubectl rollout status deployment/sample-app --timeout=120s
+          kubectl rollout status deployment/sample-app
 
-      # 11. Check Kubernetes resources
+      # 10. Check Kubernetes resources
       - name: Check Kubernetes resources
         shell: powershell
         run: |
