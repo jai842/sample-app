@@ -1,192 +1,374 @@
 name: Build Push and Deploy
 
+
 on:
+
   push:
+
     branches:
       - main
 
+
 jobs:
+
   build-push-deploy:
 
     runs-on: self-hosted
 
+
     steps:
 
-      # ==========================================
+
+      # ==================================================
       # 1. Checkout source code
-      # ==========================================
+      # ==================================================
+
       - name: Checkout code
+
         uses: actions/checkout@v4
 
 
-      # ==========================================
+      # ==================================================
       # 2. Configure Docker
-      # ==========================================
+      # ==================================================
+
       - name: Configure Docker
+
         shell: powershell
+
         run: |
+
           $dockerPath = "C:\Users\BoggalaSaiJayaram\AppData\Local\Programs\DockerDesktop\resources\bin"
+
           $dockerExe = "$dockerPath\docker.exe"
 
+
           if (!(Test-Path $dockerExe)) {
+
               Write-Error "Docker executable not found: $dockerExe"
+
               exit 1
+
           }
 
+
           Write-Host "Docker executable found:"
+
           Write-Host $dockerExe
 
-          # Make docker command available to following steps
+
+          # Add Docker directory to PATH
           Add-Content -Path $env:GITHUB_PATH -Value $dockerPath
 
 
-      # ==========================================
+      # ==================================================
       # 3. Verify Docker
-      # ==========================================
+      # ==================================================
+
       - name: Verify Docker
+
         shell: powershell
+
         run: |
+
           Write-Host "Docker location:"
+
           where.exe docker
 
+
           Write-Host ""
+
           Write-Host "Docker version:"
+
           docker version
 
 
-      # ==========================================
+      # ==================================================
       # 4. Login to Docker Hub
-      # ==========================================
+      # ==================================================
+
       - name: Login to Docker Hub
+
         uses: docker/login-action@v3
+
         with:
+
           username: ${{ secrets.DOCKERHUB_USERNAME }}
+
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
 
-      # ==========================================
-      # 5. Build Docker image
-      # ==========================================
-      - name: Build Docker image
+      # ==================================================
+      # 5. Generate unique image version
+      # ==================================================
+
+      - name: Generate Image Version
+
         shell: powershell
+
         run: |
-          docker build -t jai842/sample-app:latest .
+
+          $shortSha = "${{ github.sha }}".Substring(0,7)
 
 
-      # ==========================================
-      # 6. Push image to Docker Hub
-      # ==========================================
-      - name: Push Docker image
+          Write-Host "Git Commit SHA: ${{ github.sha }}"
+
+          Write-Host "Docker Image Version: $shortSha"
+
+
+          # Store image tag for subsequent steps
+          Add-Content `
+            -Path $env:GITHUB_ENV `
+            -Value "IMAGE_TAG=$shortSha"
+
+
+      # ==================================================
+      # 6. Build Docker image
+      # ==================================================
+
+      - name: Build Docker Image
+
         shell: powershell
+
         run: |
+
+          Write-Host "Building image:"
+
+          Write-Host "jai842/sample-app:${{ env.IMAGE_TAG }}"
+
+
+          docker build `
+            -t jai842/sample-app:${{ env.IMAGE_TAG }} `
+            -t jai842/sample-app:latest .
+
+
+      # ==================================================
+      # 7. Push versioned image to Docker Hub
+      # ==================================================
+
+      - name: Push Versioned Docker Image
+
+        shell: powershell
+
+        run: |
+
+          Write-Host "Pushing versioned image:"
+
+          Write-Host "jai842/sample-app:${{ env.IMAGE_TAG }}"
+
+
+          docker push jai842/sample-app:${{ env.IMAGE_TAG }}
+
+
+      # ==================================================
+      # 8. Push latest image to Docker Hub
+      # ==================================================
+
+      - name: Push Latest Docker Image
+
+        shell: powershell
+
+        run: |
+
+          Write-Host "Pushing latest image:"
+
+
           docker push jai842/sample-app:latest
 
 
-      # ==========================================
-      # 7. Configure Docker Desktop Kubernetes
-      # ==========================================
+      # ==================================================
+      # 9. Configure Kubernetes
+      # ==================================================
+
       - name: Configure Kubernetes
+
         shell: powershell
+
         run: |
 
           $kubeConfig = "C:\Users\BoggalaSaiJayaram\.kube\config"
 
+
           if (!(Test-Path $kubeConfig)) {
+
               Write-Error "Kubeconfig not found: $kubeConfig"
+
               exit 1
+
           }
 
+
           Write-Host "Kubeconfig found:"
+
           Write-Host $kubeConfig
 
-          # Set kubeconfig for this step
+
+          # Set kubeconfig for current step
           $env:KUBECONFIG = $kubeConfig
+
 
           # Make KUBECONFIG available to subsequent steps
           Add-Content `
             -Path $env:GITHUB_ENV `
             -Value "KUBECONFIG=$kubeConfig"
 
+
           Write-Host ""
+
           Write-Host "Available Kubernetes contexts:"
+
 
           kubectl config get-contexts
 
+
           Write-Host ""
+
           Write-Host "Selecting Docker Desktop Kubernetes context:"
+
 
           kubectl config use-context docker-desktop
 
+
           if ($LASTEXITCODE -ne 0) {
+
               Write-Error "Could not select docker-desktop context."
+
               exit 1
+
           }
 
+
           Write-Host ""
+
           Write-Host "Current Kubernetes context:"
+
 
           kubectl config current-context
 
+
           Write-Host ""
+
           Write-Host "Kubernetes nodes:"
+
 
           kubectl get nodes
 
 
-      # ==========================================
-      # 8. Deploy Kubernetes Deployment
-      # ==========================================
+      # ==================================================
+      # 10. Deploy Kubernetes Deployment
+      # ==================================================
+
       - name: Deploy Application
+
         shell: powershell
+
         run: |
+
           kubectl apply -f k8s/deployment.yaml
 
 
-      # ==========================================
-      # 9. Deploy Kubernetes Service
-      # ==========================================
+      # ==================================================
+      # 11. Deploy Kubernetes Service
+      # ==================================================
+
       - name: Deploy Service
+
         shell: powershell
+
         run: |
+
           kubectl apply -f k8s/service.yaml
 
 
-      # ==========================================
-      # 10. Restart deployment
-      # ==========================================
-      - name: Restart Kubernetes Deployment
+      # ==================================================
+      # 12. Update Deployment with new image version
+      # ==================================================
+
+      - name: Update Deployment Image
+
         shell: powershell
+
         run: |
-          kubectl rollout restart deployment/sample-app
+
+          Write-Host "Updating Kubernetes deployment with image:"
 
 
-      # ==========================================
-      # 11. Wait for deployment
-      # ==========================================
+          Write-Host "jai842/sample-app:${{ env.IMAGE_TAG }}"
+
+
+          kubectl set image deployment/sample-app `
+            nginx=jai842/sample-app:${{ env.IMAGE_TAG }}
+
+
+      # ==================================================
+      # 13. Wait for Kubernetes rollout
+      # ==================================================
+
       - name: Wait for Deployment
+
         shell: powershell
+
         run: |
-          kubectl rollout status deployment/sample-app --timeout=120s
+
+          kubectl rollout status deployment/sample-app --timeout=180s
 
 
-      # ==========================================
-      # 12. Check Kubernetes resources
-      # ==========================================
+      # ==================================================
+      # 14. Show Deployment information
+      # ==================================================
+
       - name: Check Kubernetes Resources
+
         shell: powershell
+
         run: |
 
           Write-Host ""
-          Write-Host "========== DEPLOYMENTS =========="
+
+          Write-Host "======================================"
+
+          Write-Host "DEPLOYMENTS"
+
+          Write-Host "======================================"
+
 
           kubectl get deployments
 
+
           Write-Host ""
-          Write-Host "========== PODS =========="
+
+          Write-Host "======================================"
+
+          Write-Host "PODS"
+
+          Write-Host "======================================"
+
 
           kubectl get pods -o wide
 
+
           Write-Host ""
-          Write-Host "========== SERVICES =========="
+
+          Write-Host "======================================"
+
+          Write-Host "SERVICES"
+
+          Write-Host "======================================"
+
 
           kubectl get services
+
+
+          Write-Host ""
+
+          Write-Host "======================================"
+
+          Write-Host "CURRENT IMAGE"
+
+          Write-Host "======================================"
+
+
+          kubectl get deployment sample-app `
+            -o jsonpath="{.spec.template.spec.containers[0].image}"
+
+          Write-Host ""
