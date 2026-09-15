@@ -1,13 +1,19 @@
 name: Build Push and Deploy
 
 
+# ==========================================================
+# WORKFLOW TRIGGER
+# ==========================================================
+
 on:
-
   push:
-
     branches:
       - main
 
+
+# ==========================================================
+# JOBS
+# ==========================================================
 
 jobs:
 
@@ -18,19 +24,18 @@ jobs:
 
     steps:
 
-
-      # ==================================================
+      # ======================================================
       # 1. Checkout source code
-      # ==================================================
+      # ======================================================
 
       - name: Checkout code
 
         uses: actions/checkout@v4
 
 
-      # ==================================================
+      # ======================================================
       # 2. Configure Docker
-      # ==================================================
+      # ======================================================
 
       - name: Configure Docker
 
@@ -61,9 +66,9 @@ jobs:
           Add-Content -Path $env:GITHUB_PATH -Value $dockerPath
 
 
-      # ==================================================
+      # ======================================================
       # 3. Verify Docker
-      # ==================================================
+      # ======================================================
 
       - name: Verify Docker
 
@@ -83,9 +88,9 @@ jobs:
           docker version
 
 
-      # ==================================================
+      # ======================================================
       # 4. Login to Docker Hub
-      # ==================================================
+      # ======================================================
 
       - name: Login to Docker Hub
 
@@ -98,9 +103,9 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
 
-      # ==================================================
-      # 5. Generate unique image version
-      # ==================================================
+      # ======================================================
+      # 5. Generate Docker image version
+      # ======================================================
 
       - name: Generate Image Version
 
@@ -108,23 +113,26 @@ jobs:
 
         run: |
 
-          $shortSha = "${{ github.sha }}".Substring(0,7)
+          # GitHub automatically provides the workflow run number.
+          # Example: 1, 2, 3, 4...
+
+          $version = "v${{ github.run_number }}"
 
 
-          Write-Host "Git Commit SHA: ${{ github.sha }}"
+          Write-Host "GitHub Actions Run Number: ${{ github.run_number }}"
 
-          Write-Host "Docker Image Version: $shortSha"
+          Write-Host "Docker Image Version: $version"
 
 
-          # Store image tag for subsequent steps
+          # Store version for subsequent steps
           Add-Content `
             -Path $env:GITHUB_ENV `
-            -Value "IMAGE_TAG=$shortSha"
+            -Value "IMAGE_VERSION=$version"
 
 
-      # ==================================================
+      # ======================================================
       # 6. Build Docker image
-      # ==================================================
+      # ======================================================
 
       - name: Build Docker Image
 
@@ -132,19 +140,34 @@ jobs:
 
         run: |
 
-          Write-Host "Building image:"
+          Write-Host "Building Docker image:"
 
-          Write-Host "jai842/sample-app:${{ env.IMAGE_TAG }}"
+          Write-Host "jai842/sample-app:${{ env.IMAGE_VERSION }}"
 
 
           docker build `
-            -t jai842/sample-app:${{ env.IMAGE_TAG }} `
+            -t jai842/sample-app:${{ env.IMAGE_VERSION }} `
             -t jai842/sample-app:latest .
 
 
-      # ==================================================
-      # 7. Push versioned image to Docker Hub
-      # ==================================================
+      # ======================================================
+      # 7. Verify Docker images
+      # ======================================================
+
+      - name: Verify Docker Images
+
+        shell: powershell
+
+        run: |
+
+          Write-Host "Docker images created:"
+
+          docker images jai842/sample-app
+
+
+      # ======================================================
+      # 8. Push versioned image
+      # ======================================================
 
       - name: Push Versioned Docker Image
 
@@ -154,15 +177,15 @@ jobs:
 
           Write-Host "Pushing versioned image:"
 
-          Write-Host "jai842/sample-app:${{ env.IMAGE_TAG }}"
+          Write-Host "jai842/sample-app:${{ env.IMAGE_VERSION }}"
 
 
-          docker push jai842/sample-app:${{ env.IMAGE_TAG }}
+          docker push jai842/sample-app:${{ env.IMAGE_VERSION }}
 
 
-      # ==================================================
-      # 8. Push latest image to Docker Hub
-      # ==================================================
+      # ======================================================
+      # 9. Push latest image
+      # ======================================================
 
       - name: Push Latest Docker Image
 
@@ -176,9 +199,9 @@ jobs:
           docker push jai842/sample-app:latest
 
 
-      # ==================================================
-      # 9. Configure Kubernetes
-      # ==================================================
+      # ======================================================
+      # 10. Configure Kubernetes
+      # ======================================================
 
       - name: Configure Kubernetes
 
@@ -254,9 +277,9 @@ jobs:
           kubectl get nodes
 
 
-      # ==================================================
-      # 10. Deploy Kubernetes Deployment
-      # ==================================================
+      # ======================================================
+      # 11. Deploy Kubernetes Deployment
+      # ======================================================
 
       - name: Deploy Application
 
@@ -267,9 +290,9 @@ jobs:
           kubectl apply -f k8s/deployment.yaml
 
 
-      # ==================================================
-      # 11. Deploy Kubernetes Service
-      # ==================================================
+      # ======================================================
+      # 12. Deploy Kubernetes Service
+      # ======================================================
 
       - name: Deploy Service
 
@@ -280,9 +303,9 @@ jobs:
           kubectl apply -f k8s/service.yaml
 
 
-      # ==================================================
-      # 12. Update Deployment with new image version
-      # ==================================================
+      # ======================================================
+      # 13. Update Kubernetes Deployment with new version
+      # ======================================================
 
       - name: Update Deployment Image
 
@@ -290,19 +313,18 @@ jobs:
 
         run: |
 
-          Write-Host "Updating Kubernetes deployment with image:"
+          Write-Host "Deploying image:"
 
-
-          Write-Host "jai842/sample-app:${{ env.IMAGE_TAG }}"
+          Write-Host "jai842/sample-app:${{ env.IMAGE_VERSION }}"
 
 
           kubectl set image deployment/sample-app `
-            nginx=jai842/sample-app:${{ env.IMAGE_TAG }}
+            nginx=jai842/sample-app:${{ env.IMAGE_VERSION }}
 
 
-      # ==================================================
-      # 13. Wait for Kubernetes rollout
-      # ==================================================
+      # ======================================================
+      # 14. Wait for Kubernetes rollout
+      # ======================================================
 
       - name: Wait for Deployment
 
@@ -313,9 +335,9 @@ jobs:
           kubectl rollout status deployment/sample-app --timeout=180s
 
 
-      # ==================================================
-      # 14. Show Deployment information
-      # ==================================================
+      # ======================================================
+      # 15. Check Kubernetes resources
+      # ======================================================
 
       - name: Check Kubernetes Resources
 
@@ -370,5 +392,6 @@ jobs:
 
           kubectl get deployment sample-app `
             -o jsonpath="{.spec.template.spec.containers[0].image}"
+
 
           Write-Host ""
