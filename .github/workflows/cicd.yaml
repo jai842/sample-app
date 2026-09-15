@@ -1,296 +1,397 @@
 name: Build Push and Deploy
 
+
+# ==========================================================
+# WORKFLOW TRIGGER
+# ==========================================================
+
 on:
   push:
     branches:
       - main
 
-# Prevent two releases from calculating the same version
-concurrency:
-  group: sample-app-release
-  cancel-in-progress: false
 
-# Required to create Git tags
-permissions:
-  contents: write
+# ==========================================================
+# JOBS
+# ==========================================================
 
 jobs:
+
   build-push-deploy:
 
     runs-on: self-hosted
 
+
     steps:
 
-      # --------------------------------------------------
-      # 1. Checkout source code and Git tags
-      # --------------------------------------------------
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      # ======================================================
+      # 1. Checkout source code
+      # ======================================================
 
-      # --------------------------------------------------
+      - name: Checkout code
+
+        uses: actions/checkout@v4
+
+
+      # ======================================================
       # 2. Configure Docker
-      # --------------------------------------------------
+      # ======================================================
+
       - name: Configure Docker
+
         shell: powershell
+
         run: |
+
           $dockerPath = "C:\Users\BoggalaSaiJayaram\AppData\Local\Programs\DockerDesktop\resources\bin"
+
           $dockerExe = "$dockerPath\docker.exe"
 
+
           if (!(Test-Path $dockerExe)) {
+
               Write-Error "Docker executable not found: $dockerExe"
+
               exit 1
+
           }
+
 
           Write-Host "Docker executable found:"
+
           Write-Host $dockerExe
 
+
+          # Add Docker directory to PATH
           Add-Content -Path $env:GITHUB_PATH -Value $dockerPath
 
-      # --------------------------------------------------
+
+      # ======================================================
       # 3. Verify Docker
-      # --------------------------------------------------
+      # ======================================================
+
       - name: Verify Docker
+
         shell: powershell
+
         run: |
+
           Write-Host "Docker location:"
+
           where.exe docker
 
+
           Write-Host ""
+
           Write-Host "Docker version:"
+
           docker version
 
-      # --------------------------------------------------
+
+      # ======================================================
       # 4. Login to Docker Hub
-      # --------------------------------------------------
+      # ======================================================
+
       - name: Login to Docker Hub
+
         uses: docker/login-action@v3
+
         with:
+
           username: ${{ secrets.DOCKERHUB_USERNAME }}
+
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # --------------------------------------------------
-      # 5. Generate v1, v2, v3...
-      # --------------------------------------------------
+
+      # ======================================================
+      # 5. Generate Docker image version
+      # ======================================================
+
       - name: Generate Image Version
+
         shell: powershell
+
         run: |
 
-          Write-Host "Checking existing Git version tags..."
+          # GitHub automatically provides the workflow run number.
+          # Example: 1, 2, 3, 4...
 
-          git fetch --tags
+          $version = "v${{ github.run_number }}"
 
-          $tags = git tag --list "v*" |
-            Where-Object { $_ -match '^v[0-9]+$' }
 
-          if ($tags.Count -eq 0) {
-              $nextVersion = 1
-          }
-          else {
-              $numbers = $tags |
-                ForEach-Object {
-                    [int]($_ -replace '^v', '')
-                }
+          Write-Host "GitHub Actions Run Number: ${{ github.run_number }}"
 
-              $nextVersion = ($numbers | Measure-Object -Maximum).Maximum + 1
-          }
+          Write-Host "Docker Image Version: $version"
 
-          $version = "v$nextVersion"
 
-          Write-Host "New image version: $version"
-
+          # Store version for subsequent steps
           Add-Content `
             -Path $env:GITHUB_ENV `
             -Value "IMAGE_VERSION=$version"
 
-      # --------------------------------------------------
+
+      # ======================================================
       # 6. Build Docker image
-      # --------------------------------------------------
+      # ======================================================
+
       - name: Build Docker Image
+
         shell: powershell
+
         run: |
 
-          Write-Host "Building Docker image..."
+          Write-Host "Building Docker image:"
+
+          Write-Host "jai842/sample-app:${{ env.IMAGE_VERSION }}"
+
 
           docker build `
             -t jai842/sample-app:${{ env.IMAGE_VERSION }} `
             -t jai842/sample-app:latest .
 
-      # --------------------------------------------------
+
+      # ======================================================
       # 7. Verify Docker images
-      # --------------------------------------------------
+      # ======================================================
+
       - name: Verify Docker Images
+
         shell: powershell
+
         run: |
 
           Write-Host "Docker images created:"
 
           docker images jai842/sample-app
 
-      # --------------------------------------------------
+
+      # ======================================================
       # 8. Push versioned image
-      # --------------------------------------------------
+      # ======================================================
+
       - name: Push Versioned Docker Image
+
         shell: powershell
+
         run: |
 
-          Write-Host "Pushing:"
+          Write-Host "Pushing versioned image:"
+
           Write-Host "jai842/sample-app:${{ env.IMAGE_VERSION }}"
+
 
           docker push jai842/sample-app:${{ env.IMAGE_VERSION }}
 
-      # --------------------------------------------------
+
+      # ======================================================
       # 9. Push latest image
-      # --------------------------------------------------
+      # ======================================================
+
       - name: Push Latest Docker Image
+
         shell: powershell
+
         run: |
 
-          Write-Host "Pushing:"
-          Write-Host "jai842/sample-app:latest"
+          Write-Host "Pushing latest image:"
+
 
           docker push jai842/sample-app:latest
 
-      # --------------------------------------------------
-      # 10. Create Git version tag
-      # --------------------------------------------------
-      - name: Create Git Version Tag
-        shell: powershell
-        run: |
 
-          Write-Host "Creating Git tag:"
-          Write-Host "${{ env.IMAGE_VERSION }}"
+      # ======================================================
+      # 10. Configure Kubernetes
+      # ======================================================
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git tag ${{ env.IMAGE_VERSION }}
-
-          git push origin ${{ env.IMAGE_VERSION }}
-
-      # --------------------------------------------------
-      # 11. Configure Kubernetes
-      # --------------------------------------------------
       - name: Configure Kubernetes
+
         shell: powershell
+
         run: |
 
           $kubeConfig = "C:\Users\BoggalaSaiJayaram\.kube\config"
 
+
           if (!(Test-Path $kubeConfig)) {
+
               Write-Error "Kubeconfig not found: $kubeConfig"
+
               exit 1
+
           }
 
+
           Write-Host "Kubeconfig found:"
+
           Write-Host $kubeConfig
 
+
+          # Set kubeconfig for current step
           $env:KUBECONFIG = $kubeConfig
 
+
+          # Make KUBECONFIG available to subsequent steps
           Add-Content `
             -Path $env:GITHUB_ENV `
             -Value "KUBECONFIG=$kubeConfig"
 
+
           Write-Host ""
-          Write-Host "Kubernetes contexts:"
+
+          Write-Host "Available Kubernetes contexts:"
+
 
           kubectl config get-contexts
 
+
           Write-Host ""
-          Write-Host "Selecting Docker Desktop context:"
+
+          Write-Host "Selecting Docker Desktop Kubernetes context:"
+
 
           kubectl config use-context docker-desktop
 
+
           if ($LASTEXITCODE -ne 0) {
+
               Write-Error "Could not select docker-desktop context."
+
               exit 1
+
           }
 
+
           Write-Host ""
+
           Write-Host "Current Kubernetes context:"
+
 
           kubectl config current-context
 
+
           Write-Host ""
+
           Write-Host "Kubernetes nodes:"
+
 
           kubectl get nodes
 
-      # --------------------------------------------------
-      # 12. Apply Deployment YAML
-      # --------------------------------------------------
+
+      # ======================================================
+      # 11. Deploy Kubernetes Deployment
+      # ======================================================
+
       - name: Deploy Application
+
         shell: powershell
+
         run: |
 
           kubectl apply -f k8s/deployment.yaml
 
-      # --------------------------------------------------
-      # 13. Apply Service YAML
-      # --------------------------------------------------
+
+      # ======================================================
+      # 12. Deploy Kubernetes Service
+      # ======================================================
+
       - name: Deploy Service
+
         shell: powershell
+
         run: |
 
           kubectl apply -f k8s/service.yaml
 
-      # --------------------------------------------------
-      # 14. Change live Deployment to v1/v2/v3...
-      # --------------------------------------------------
+
+      # ======================================================
+      # 13. Update Kubernetes Deployment with new version
+      # ======================================================
+
       - name: Update Deployment Image
+
         shell: powershell
+
         run: |
 
           Write-Host "Deploying image:"
+
           Write-Host "jai842/sample-app:${{ env.IMAGE_VERSION }}"
+
 
           kubectl set image deployment/sample-app `
             nginx=jai842/sample-app:${{ env.IMAGE_VERSION }}
 
-      # --------------------------------------------------
-      # 15. Wait for rollout
-      # --------------------------------------------------
+
+      # ======================================================
+      # 14. Wait for Kubernetes rollout
+      # ======================================================
+
       - name: Wait for Deployment
+
         shell: powershell
+
         run: |
 
           kubectl rollout status deployment/sample-app --timeout=180s
 
-      # --------------------------------------------------
-      # 16. Check Kubernetes resources
-      # --------------------------------------------------
+
+      # ======================================================
+      # 15. Check Kubernetes resources
+      # ======================================================
+
       - name: Check Kubernetes Resources
+
         shell: powershell
+
         run: |
 
           Write-Host ""
+
           Write-Host "======================================"
+
           Write-Host "DEPLOYMENTS"
+
           Write-Host "======================================"
+
 
           kubectl get deployments
 
+
           Write-Host ""
+
           Write-Host "======================================"
+
           Write-Host "PODS"
+
           Write-Host "======================================"
+
 
           kubectl get pods -o wide
 
+
           Write-Host ""
+
           Write-Host "======================================"
+
           Write-Host "SERVICES"
+
           Write-Host "======================================"
+
 
           kubectl get services
 
+
           Write-Host ""
+
           Write-Host "======================================"
+
           Write-Host "CURRENT IMAGE"
+
           Write-Host "======================================"
+
 
           kubectl get deployment sample-app `
             -o jsonpath="{.spec.template.spec.containers[0].image}"
+
 
           Write-Host ""
