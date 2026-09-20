@@ -1,32 +1,25 @@
 name: Build Push and Deploy
 
 on:
-  push:
-    branches:
-      - main
-
-  workflow_dispatch:
-    inputs:
-      release_type:
-        description: "Select the Semantic Version release type"
-        required: true
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
+  pull_request:
+    types:
+      - closed
 
 permissions:
   contents: write
 
 jobs:
   build-push-deploy:
+
+    # Run only when the Pull Request was actually merged
+    if: github.event.pull_request.merged == true
+
     runs-on: self-hosted
 
     steps:
 
       # --------------------------------------------------
-      # 1. Checkout source code
+      # 1. Checkout the merged code
       # --------------------------------------------------
       - name: Checkout code
         uses: actions/checkout@v4
@@ -40,6 +33,7 @@ jobs:
       - name: Configure Docker
         shell: powershell
         run: |
+
           $dockerPath = "C:\Users\BoggalaSaiJayaram\AppData\Local\Programs\DockerDesktop\resources\bin"
           $dockerExe = "$dockerPath\docker.exe"
 
@@ -75,11 +69,12 @@ jobs:
 
 
       # --------------------------------------------------
-      # 4. Read VERSION file
+      # 4. Read current VERSION
       # --------------------------------------------------
       - name: Read VERSION
         shell: powershell
         run: |
+
           if (-not (Test-Path "VERSION")) {
               Write-Error "VERSION file not found!"
               exit 1
@@ -89,6 +84,7 @@ jobs:
 
           Write-Host "Current version: $currentVersion"
 
+          # Validate Semantic Version format
           if ($currentVersion -notmatch '^\d+\.\d+\.\d+$') {
               Write-Error "VERSION must follow Semantic Versioning format, for example 1.0.0"
               exit 1
@@ -100,17 +96,36 @@ jobs:
 
 
       # --------------------------------------------------
-      # 5. Determine release type
+      # 5. Determine release type from branch name
       # --------------------------------------------------
       - name: Determine Release Type
         shell: powershell
         run: |
-          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-              $releaseType = "${{ inputs.release_type }}"
+
+          $branchName = "${{ github.event.pull_request.head.ref }}"
+
+          Write-Host "Source branch: $branchName"
+
+          if ($branchName -like "major/*") {
+
+              $releaseType = "major"
+
+          }
+          elseif ($branchName -like "minor/*") {
+
+              $releaseType = "minor"
+
+          }
+          elseif ($branchName -like "patch/*") {
+
+              $releaseType = "patch"
+
           }
           else {
-              # Normal push to main = PATCH release
-              $releaseType = "patch"
+
+              Write-Error "Invalid branch name: $branchName"
+              Write-Error "Branch name must start with major/, minor/, or patch/"
+              exit 1
           }
 
           Write-Host "Release type: $releaseType"
@@ -126,6 +141,7 @@ jobs:
       - name: Calculate Next Version
         shell: powershell
         run: |
+
           $versionParts = $env:CURRENT_VERSION.Split('.')
 
           $major = [int]$versionParts[0]
@@ -135,21 +151,25 @@ jobs:
           switch ($env:RELEASE_TYPE) {
 
               "major" {
+
                   $major++
                   $minor = 0
                   $patch = 0
               }
 
               "minor" {
+
                   $minor++
                   $patch = 0
               }
 
               "patch" {
+
                   $patch++
               }
 
               default {
+
                   Write-Error "Invalid release type: $env:RELEASE_TYPE"
                   exit 1
               }
@@ -172,6 +192,7 @@ jobs:
       - name: Update VERSION file
         shell: powershell
         run: |
+
           Set-Content `
             -Path VERSION `
             -Value $env:VERSION `
@@ -187,6 +208,7 @@ jobs:
       - name: Build Docker Image
         shell: powershell
         run: |
+
           Write-Host "Building Docker image..."
 
           docker build `
@@ -201,6 +223,7 @@ jobs:
       - name: Push Docker Image
         shell: powershell
         run: |
+
           Write-Host "Pushing version: $env:VERSION"
 
           docker push "jai842/sample-app:$env:VERSION"
@@ -216,6 +239,7 @@ jobs:
       - name: Configure Kubernetes
         shell: powershell
         run: |
+
           $kubeConfig = "C:\Users\BoggalaSaiJayaram\.kube\config"
 
           if (-not (Test-Path $kubeConfig)) {
@@ -244,7 +268,9 @@ jobs:
       - name: Deploy Kubernetes Resources
         shell: powershell
         run: |
+
           kubectl apply -f k8s/deployment.yaml
+
           kubectl apply -f k8s/service.yaml
 
 
@@ -254,6 +280,7 @@ jobs:
       - name: Update Kubernetes Image
         shell: powershell
         run: |
+
           Write-Host "Updating Kubernetes deployment to:"
           Write-Host "jai842/sample-app:$env:VERSION"
 
@@ -267,6 +294,7 @@ jobs:
       - name: Wait for Deployment
         shell: powershell
         run: |
+
           kubectl rollout status deployment/sample-app `
             --timeout=180s
 
@@ -277,14 +305,17 @@ jobs:
       - name: Check Kubernetes Resources
         shell: powershell
         run: |
+
           Write-Host "Pods:"
           kubectl get pods -o wide
 
           Write-Host ""
+
           Write-Host "Deployment:"
           kubectl get deployment sample-app
 
           Write-Host ""
+
           Write-Host "Service:"
           kubectl get service sample-app-service
 
@@ -295,6 +326,7 @@ jobs:
       - name: Configure Git Safe Directory
         shell: powershell
         run: |
+
           git config --global --add safe.directory "$env:GITHUB_WORKSPACE"
 
           Write-Host "Git safe directory configured:"
@@ -307,7 +339,9 @@ jobs:
       - name: Configure Git Identity
         shell: powershell
         run: |
+
           git config user.name "github-actions[bot]"
+
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
 
@@ -317,6 +351,7 @@ jobs:
       - name: Commit VERSION
         shell: powershell
         run: |
+
           git add VERSION
 
           if (git diff --cached --quiet) {
@@ -338,15 +373,22 @@ jobs:
       - name: Release Summary
         shell: powershell
         run: |
+
           Write-Host "========================================="
           Write-Host "        RELEASE COMPLETED"
           Write-Host "========================================="
           Write-Host ""
-          Write-Host "Application Version : $env:VERSION"
-          Write-Host "Docker Image        : jai842/sample-app:$env:VERSION"
-          Write-Host "Docker Latest       : jai842/sample-app:latest"
+
+          Write-Host "Source Branch      : ${{ github.event.pull_request.head.ref }}"
+          Write-Host "Release Type       : $env:RELEASE_TYPE"
+          Write-Host "Application Version: $env:VERSION"
+          Write-Host "Docker Image       : jai842/sample-app:$env:VERSION"
+          Write-Host "Docker Latest      : jai842/sample-app:latest"
+
           Write-Host ""
           Write-Host "Kubernetes Deployment:"
+
           kubectl get deployment sample-app
+
           Write-Host ""
           Write-Host "========================================="
