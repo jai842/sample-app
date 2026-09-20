@@ -41,17 +41,26 @@ jobs:
         shell: powershell
         run: |
           $dockerPath = "C:\Users\BoggalaSaiJayaram\AppData\Local\Programs\DockerDesktop\resources\bin"
+          $dockerExe = "$dockerPath\docker.exe"
 
-          if (-not (Test-Path "$dockerPath\docker.exe")) {
-              Write-Error "Docker executable not found at $dockerPath"
+          Write-Host "Checking Docker:"
+          Write-Host $dockerExe
+
+          if (-not (Test-Path $dockerExe)) {
+              Write-Error "Docker executable not found at $dockerExe"
               exit 1
           }
 
-          Write-Host "Docker found at:"
-          Write-Host "$dockerPath\docker.exe"
+          # Add Docker to PATH for the current step
+          $env:Path = "$dockerPath;$env:Path"
 
+          # Add Docker to PATH for subsequent steps
           Add-Content $env:GITHUB_PATH $dockerPath
 
+          Write-Host "Docker version:"
+          & $dockerExe --version
+
+          Write-Host "Docker command test:"
           docker --version
 
 
@@ -67,7 +76,7 @@ jobs:
 
 
       # --------------------------------------------------
-      # 4. Read current version
+      # 4. Read VERSION file
       # --------------------------------------------------
       - name: Read VERSION
         shell: powershell
@@ -97,7 +106,6 @@ jobs:
       - name: Determine Release Type
         shell: powershell
         run: |
-
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
               $releaseType = "${{ inputs.release_type }}"
           }
@@ -119,7 +127,6 @@ jobs:
       - name: Calculate Next Version
         shell: powershell
         run: |
-
           $versionParts = $env:CURRENT_VERSION.Split('.')
 
           $major = [int]$versionParts[0]
@@ -166,7 +173,6 @@ jobs:
       - name: Update VERSION file
         shell: powershell
         run: |
-
           Set-Content `
             -Path VERSION `
             -Value $env:VERSION `
@@ -182,7 +188,6 @@ jobs:
       - name: Build Docker Image
         shell: powershell
         run: |
-
           Write-Host "Building Docker image..."
 
           docker build `
@@ -197,7 +202,6 @@ jobs:
       - name: Push Docker Image
         shell: powershell
         run: |
-
           Write-Host "Pushing version: $env:VERSION"
 
           docker push "jai842/sample-app:$env:VERSION"
@@ -213,7 +217,6 @@ jobs:
       - name: Configure Kubernetes
         shell: powershell
         run: |
-
           $kubeConfig = "C:\Users\BoggalaSaiJayaram\.kube\config"
 
           if (-not (Test-Path $kubeConfig)) {
@@ -242,18 +245,16 @@ jobs:
       - name: Deploy Kubernetes Resources
         shell: powershell
         run: |
-
           kubectl apply -f k8s/deployment.yaml
           kubectl apply -f k8s/service.yaml
 
 
       # --------------------------------------------------
-      # 12. Update deployment with exact version
+      # 12. Update Kubernetes deployment to exact version
       # --------------------------------------------------
       - name: Update Kubernetes Image
         shell: powershell
         run: |
-
           Write-Host "Updating Kubernetes deployment to:"
           Write-Host "jai842/sample-app:$env:VERSION"
 
@@ -267,7 +268,6 @@ jobs:
       - name: Wait for Deployment
         shell: powershell
         run: |
-
           kubectl rollout status deployment/sample-app `
             --timeout=180s
 
@@ -278,7 +278,6 @@ jobs:
       - name: Check Kubernetes Resources
         shell: powershell
         run: |
-
           Write-Host "Pods:"
           kubectl get pods -o wide
 
@@ -297,7 +296,6 @@ jobs:
       - name: Configure Git Safe Directory
         shell: powershell
         run: |
-
           git config --global --add safe.directory "$env:GITHUB_WORKSPACE"
 
           Write-Host "Git safe directory configured:"
@@ -310,7 +308,6 @@ jobs:
       - name: Configure Git Identity
         shell: powershell
         run: |
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
@@ -321,7 +318,6 @@ jobs:
       - name: Commit VERSION
         shell: powershell
         run: |
-
           git add VERSION
 
           if (git diff --cached --quiet) {
@@ -343,7 +339,6 @@ jobs:
       - name: Release Summary
         shell: powershell
         run: |
-
           Write-Host "========================================="
           Write-Host "        RELEASE COMPLETED"
           Write-Host "========================================="
