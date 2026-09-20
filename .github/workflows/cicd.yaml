@@ -1,135 +1,132 @@
 name: Build Push and Deploy
 
 on:
+  push:
+    branches:
+      - main
+
   workflow_dispatch:
     inputs:
       release_type:
-        description: "Select the type of release"
+        description: "Select the Semantic Version release type"
         required: true
         type: choice
         options:
           - patch
           - minor
           - major
-        default: patch
-
-  push:
-    branches:
-      - main
 
 permissions:
   contents: write
 
-concurrency:
-  group: sample-app-release
-  cancel-in-progress: false
-
 jobs:
   build-push-deploy:
-
     runs-on: self-hosted
 
     steps:
 
-      # ==================================================
-      # 1. Checkout code
-      # ==================================================
+      # --------------------------------------------------
+      # 1. Checkout source code
+      # --------------------------------------------------
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # ==================================================
+
+      # --------------------------------------------------
       # 2. Configure Docker
-      # ==================================================
+      # --------------------------------------------------
       - name: Configure Docker
         shell: powershell
         run: |
           $dockerPath = "C:\Users\BoggalaSaiJayaram\AppData\Local\Programs\DockerDesktop\resources\bin"
-          $dockerExe = "$dockerPath\docker.exe"
 
-          if (!(Test-Path $dockerExe)) {
-              Write-Error "Docker executable not found: $dockerExe"
+          if (-not (Test-Path "$dockerPath\docker.exe")) {
+              Write-Error "Docker executable not found at $dockerPath"
               exit 1
           }
 
-          Write-Host "Docker executable found:"
-          Write-Host $dockerExe
+          Write-Host "Docker found at:"
+          Write-Host "$dockerPath\docker.exe"
 
-          Add-Content -Path $env:GITHUB_PATH -Value $dockerPath
+          Add-Content $env:GITHUB_PATH $dockerPath
 
-      # ==================================================
-      # 3. Verify Docker
-      # ==================================================
-      - name: Verify Docker
-        shell: powershell
-        run: |
-          Write-Host "Docker location:"
-          where.exe docker
+          docker --version
 
-          Write-Host ""
-          Write-Host "Docker version:"
-          docker version
 
-      # ==================================================
-      # 4. Login to Docker Hub
-      # ==================================================
+      # --------------------------------------------------
+      # 3. Login to Docker Hub
+      # --------------------------------------------------
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      # ==================================================
-      # 5. Read current version
-      # ==================================================
-      - name: Read Current Version
         shell: powershell
         run: |
+          $env:DOCKERHUB_TOKEN | docker login `
+            --username "${{ secrets.DOCKERHUB_USERNAME }}" `
+            --password-stdin
 
-          if (!(Test-Path VERSION)) {
-              Write-Error "VERSION file not found."
+
+      # --------------------------------------------------
+      # 4. Read current version
+      # --------------------------------------------------
+      - name: Read VERSION
+        shell: powershell
+        run: |
+          if (-not (Test-Path "VERSION")) {
+              Write-Error "VERSION file not found!"
               exit 1
           }
 
-          $currentVersion = (Get-Content VERSION).Trim()
+          $currentVersion = (Get-Content VERSION -Raw).Trim()
 
           Write-Host "Current version: $currentVersion"
 
           if ($currentVersion -notmatch '^\d+\.\d+\.\d+$') {
-              Write-Error "VERSION must use MAJOR.MINOR.PATCH format."
+              Write-Error "VERSION must follow Semantic Versioning format, for example 1.0.0"
               exit 1
           }
 
-          Add-Content `
-            -Path $env:GITHUB_ENV `
-            -Value "CURRENT_VERSION=$currentVersion"
+          "CURRENT_VERSION=$currentVersion" | Out-File `
+            -FilePath $env:GITHUB_ENV `
+            -Append
 
-      # ==================================================
-      # 6. Calculate next Semantic Version
-      # ==================================================
-      - name: Calculate Next Version
+
+      # --------------------------------------------------
+      # 5. Determine release type
+      # --------------------------------------------------
+      - name: Determine Release Type
         shell: powershell
         run: |
 
-          $current = "${{ env.CURRENT_VERSION }}"
-
-          $parts = $current.Split('.')
-
-          $major = [int]$parts[0]
-          $minor = [int]$parts[1]
-          $patch = [int]$parts[2]
-
-          $releaseType = "${{ inputs.release_type }}"
-
-          # For normal push to main, use PATCH
-          if ([string]::IsNullOrWhiteSpace($releaseType)) {
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+              $releaseType = "${{ inputs.release_type }}"
+          }
+          else {
+              # Normal push to main = PATCH release
               $releaseType = "patch"
           }
 
           Write-Host "Release type: $releaseType"
 
-          switch ($releaseType) {
+          "RELEASE_TYPE=$releaseType" | Out-File `
+            -FilePath $env:GITHUB_ENV `
+            -Append
+
+
+      # --------------------------------------------------
+      # 6. Calculate next Semantic Version
+      # --------------------------------------------------
+      - name: Calculate Next Version
+        shell: powershell
+        run: |
+
+          $versionParts = $env:CURRENT_VERSION.Split('.')
+
+          $major = [int]$versionParts[0]
+          $minor = [int]$versionParts[1]
+          $patch = [int]$versionParts[2]
+
+          switch ($env:RELEASE_TYPE) {
 
               "major" {
                   $major++
@@ -147,222 +144,215 @@ jobs:
               }
 
               default {
-                  Write-Error "Invalid release type: $releaseType"
+                  Write-Error "Invalid release type: $env:RELEASE_TYPE"
                   exit 1
               }
           }
 
           $newVersion = "$major.$minor.$patch"
 
-          Write-Host "Current version : $current"
+          Write-Host "Current version : $env:CURRENT_VERSION"
+          Write-Host "Release type    : $env:RELEASE_TYPE"
           Write-Host "New version     : $newVersion"
 
-          Add-Content `
-            -Path $env:GITHUB_ENV `
-            -Value "IMAGE_VERSION=$newVersion"
+          "VERSION=$newVersion" | Out-File `
+            -FilePath $env:GITHUB_ENV `
+            -Append
 
-      # ==================================================
+
+      # --------------------------------------------------
       # 7. Update VERSION file
-      # ==================================================
+      # --------------------------------------------------
       - name: Update VERSION file
         shell: powershell
         run: |
 
-          $version = "${{ env.IMAGE_VERSION }}"
-
-          Write-Host "Updating VERSION file to:"
-          Write-Host $version
-
           Set-Content `
             -Path VERSION `
-            -Value $version
+            -Value $env:VERSION `
+            -NoNewline
 
-      # ==================================================
+          Write-Host "VERSION file updated to:"
+          Get-Content VERSION
+
+
+      # --------------------------------------------------
       # 8. Build Docker image
-      # ==================================================
+      # --------------------------------------------------
       - name: Build Docker Image
         shell: powershell
         run: |
 
-          Write-Host "Building Docker image:"
-          Write-Host "jai842/sample-app:${{ env.IMAGE_VERSION }}"
+          Write-Host "Building Docker image..."
 
           docker build `
-            -t jai842/sample-app:${{ env.IMAGE_VERSION }} `
-            -t jai842/sample-app:latest .
+            -t "jai842/sample-app:$env:VERSION" `
+            -t "jai842/sample-app:latest" `
+            .
 
-      # ==================================================
-      # 9. Verify Docker images
-      # ==================================================
-      - name: Verify Docker Images
+
+      # --------------------------------------------------
+      # 9. Push Docker images to Docker Hub
+      # --------------------------------------------------
+      - name: Push Docker Image
         shell: powershell
         run: |
 
-          docker images jai842/sample-app
+          Write-Host "Pushing version: $env:VERSION"
 
-      # ==================================================
-      # 10. Push versioned Docker image
-      # ==================================================
-      - name: Push Versioned Docker Image
-        shell: powershell
-        run: |
+          docker push "jai842/sample-app:$env:VERSION"
 
-          Write-Host "Pushing:"
-          Write-Host "jai842/sample-app:${{ env.IMAGE_VERSION }}"
+          Write-Host "Pushing latest..."
 
-          docker push jai842/sample-app:${{ env.IMAGE_VERSION }}
+          docker push "jai842/sample-app:latest"
 
-      # ==================================================
-      # 11. Push latest Docker image
-      # ==================================================
-      - name: Push Latest Docker Image
-        shell: powershell
-        run: |
 
-          Write-Host "Pushing latest image."
-
-          docker push jai842/sample-app:latest
-
-      # ==================================================
-      # 12. Configure Kubernetes
-      # ==================================================
+      # --------------------------------------------------
+      # 10. Configure Kubernetes
+      # --------------------------------------------------
       - name: Configure Kubernetes
         shell: powershell
         run: |
 
           $kubeConfig = "C:\Users\BoggalaSaiJayaram\.kube\config"
 
-          if (!(Test-Path $kubeConfig)) {
-              Write-Error "Kubeconfig not found: $kubeConfig"
+          if (-not (Test-Path $kubeConfig)) {
+              Write-Error "Kubeconfig not found at $kubeConfig"
               exit 1
           }
 
           $env:KUBECONFIG = $kubeConfig
 
-          Add-Content `
-            -Path $env:GITHUB_ENV `
-            -Value "KUBECONFIG=$kubeConfig"
+          "KUBECONFIG=$kubeConfig" | Out-File `
+            -FilePath $env:GITHUB_ENV `
+            -Append
 
           kubectl config use-context docker-desktop
 
-          if ($LASTEXITCODE -ne 0) {
-              Write-Error "Could not select docker-desktop context."
-              exit 1
-          }
-
-          Write-Host ""
           Write-Host "Current Kubernetes context:"
-
           kubectl config current-context
 
-          Write-Host ""
           Write-Host "Kubernetes nodes:"
-
           kubectl get nodes
 
-      # ==================================================
-      # 13. Apply Deployment YAML
-      # ==================================================
-      - name: Deploy Application
+
+      # --------------------------------------------------
+      # 11. Deploy Kubernetes resources
+      # --------------------------------------------------
+      - name: Deploy Kubernetes Resources
         shell: powershell
         run: |
 
           kubectl apply -f k8s/deployment.yaml
-
-      # ==================================================
-      # 14. Apply Service YAML
-      # ==================================================
-      - name: Deploy Service
-        shell: powershell
-        run: |
-
           kubectl apply -f k8s/service.yaml
 
-      # ==================================================
-      # 15. Deploy Semantic Version
-      # ==================================================
-      - name: Update Deployment Image
+
+      # --------------------------------------------------
+      # 12. Update deployment with exact version
+      # --------------------------------------------------
+      - name: Update Kubernetes Image
         shell: powershell
         run: |
 
-          Write-Host "Deploying:"
-          Write-Host "jai842/sample-app:${{ env.IMAGE_VERSION }}"
+          Write-Host "Updating Kubernetes deployment to:"
+          Write-Host "jai842/sample-app:$env:VERSION"
 
           kubectl set image deployment/sample-app `
-            nginx=jai842/sample-app:${{ env.IMAGE_VERSION }}
+            nginx="jai842/sample-app:$env:VERSION"
 
-      # ==================================================
-      # 16. Wait for Kubernetes rollout
-      # ==================================================
+
+      # --------------------------------------------------
+      # 13. Wait for deployment
+      # --------------------------------------------------
       - name: Wait for Deployment
         shell: powershell
         run: |
 
-          kubectl rollout status deployment/sample-app --timeout=180s
+          kubectl rollout status deployment/sample-app `
+            --timeout=180s
 
-      # ==================================================
-      # 17. Create Git tag
-      # ==================================================
-      - name: Create Git Tag
-        shell: powershell
-        run: |
 
-          $version = "${{ env.IMAGE_VERSION }}"
-
-          $tag = "v$version"
-
-          Write-Host "Creating Git tag:"
-          Write-Host $tag
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add VERSION
-
-          git commit `
-            -m "Release $version" `
-            --allow-empty
-
-          git tag $tag
-
-          git push origin HEAD:main
-
-          git push origin $tag
-
-      # ==================================================
-      # 18. Display final resources
-      # ==================================================
+      # --------------------------------------------------
+      # 14. Check Kubernetes resources
+      # --------------------------------------------------
       - name: Check Kubernetes Resources
         shell: powershell
         run: |
 
-          Write-Host ""
-          Write-Host "======================================"
-          Write-Host "DEPLOYMENT"
-          Write-Host "======================================"
-
-          kubectl get deployment sample-app
-
-          Write-Host ""
-          Write-Host "======================================"
-          Write-Host "PODS"
-          Write-Host "======================================"
-
+          Write-Host "Pods:"
           kubectl get pods -o wide
 
           Write-Host ""
-          Write-Host "======================================"
-          Write-Host "SERVICES"
-          Write-Host "======================================"
-
-          kubectl get services
+          Write-Host "Deployment:"
+          kubectl get deployment sample-app
 
           Write-Host ""
-          Write-Host "======================================"
-          Write-Host "CURRENT IMAGE"
-          Write-Host "======================================"
+          Write-Host "Service:"
+          kubectl get service sample-app-service
 
-          kubectl get deployment sample-app `
-            -o jsonpath="{.spec.template.spec.containers[0].image}"
 
+      # --------------------------------------------------
+      # 15. Configure Git safe directory
+      # --------------------------------------------------
+      - name: Configure Git Safe Directory
+        shell: powershell
+        run: |
+
+          git config --global --add safe.directory "$env:GITHUB_WORKSPACE"
+
+          Write-Host "Git safe directory configured:"
+          Write-Host "$env:GITHUB_WORKSPACE"
+
+
+      # --------------------------------------------------
+      # 16. Configure Git identity
+      # --------------------------------------------------
+      - name: Configure Git Identity
+        shell: powershell
+        run: |
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+
+      # --------------------------------------------------
+      # 17. Commit updated VERSION file
+      # --------------------------------------------------
+      - name: Commit VERSION
+        shell: powershell
+        run: |
+
+          git add VERSION
+
+          if (git diff --cached --quiet) {
+
+              Write-Host "No VERSION changes to commit."
+
+          }
+          else {
+
+              git commit -m "chore: release $env:VERSION [skip ci]"
+
+              git push origin HEAD:main
+          }
+
+
+      # --------------------------------------------------
+      # 18. Final release summary
+      # --------------------------------------------------
+      - name: Release Summary
+        shell: powershell
+        run: |
+
+          Write-Host "========================================="
+          Write-Host "        RELEASE COMPLETED"
+          Write-Host "========================================="
           Write-Host ""
+          Write-Host "Application Version : $env:VERSION"
+          Write-Host "Docker Image        : jai842/sample-app:$env:VERSION"
+          Write-Host "Docker Latest       : jai842/sample-app:latest"
+          Write-Host ""
+          Write-Host "Kubernetes Deployment:"
+          kubectl get deployment sample-app
+          Write-Host ""
+          Write-Host "========================================="
