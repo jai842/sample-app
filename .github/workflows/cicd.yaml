@@ -1,3 +1,4 @@
+```yaml
 name: Build Push and Deploy
 
 on:
@@ -71,7 +72,7 @@ jobs:
 
 
       # --------------------------------------------------
-      # 4. Read current VERSION
+      # 4. Read VERSION
       # --------------------------------------------------
       - name: Read VERSION
         shell: powershell
@@ -205,7 +206,42 @@ jobs:
 
 
       # --------------------------------------------------
-      # 8. Build Docker image
+      # 8. Update Kubernetes deployment.yaml
+      # --------------------------------------------------
+      - name: Update Kubernetes Image Version
+        shell: powershell
+        run: |
+
+          $deploymentFile = "k8s/deployment.yaml"
+
+          if (-not (Test-Path $deploymentFile)) {
+              Write-Error "Kubernetes deployment file not found: $deploymentFile"
+              exit 1
+          }
+
+          Write-Host "Updating Kubernetes image to:"
+          Write-Host "jai842/sample-app:$env:VERSION"
+
+          $content = Get-Content $deploymentFile -Raw
+
+          $newImage = "jai842/sample-app:$env:VERSION"
+
+          # Replace the existing sample-app image tag
+          $updatedContent = $content -replace `
+            'jai842/sample-app:[^\s]+', `
+            $newImage
+
+          Set-Content `
+            -Path $deploymentFile `
+            -Value $updatedContent `
+            -NoNewline
+
+          Write-Host "Updated deployment.yaml:"
+          Get-Content $deploymentFile
+
+
+      # --------------------------------------------------
+      # 9. Build Docker image
       # --------------------------------------------------
       - name: Build Docker Image
         shell: powershell
@@ -220,7 +256,7 @@ jobs:
 
 
       # --------------------------------------------------
-      # 9. Push Docker images to Docker Hub
+      # 10. Push Docker images to Docker Hub
       # --------------------------------------------------
       - name: Push Docker Image
         shell: powershell
@@ -236,7 +272,7 @@ jobs:
 
 
       # --------------------------------------------------
-      # 10. Configure Kubernetes
+      # 11. Configure Kubernetes
       # --------------------------------------------------
       - name: Configure Kubernetes
         shell: powershell
@@ -265,7 +301,7 @@ jobs:
 
 
       # --------------------------------------------------
-      # 11. Deploy Kubernetes resources
+      # 12. Deploy Kubernetes resources
       # --------------------------------------------------
       - name: Deploy Kubernetes Resources
         shell: powershell
@@ -274,20 +310,6 @@ jobs:
           kubectl apply -f k8s/deployment.yaml
 
           kubectl apply -f k8s/service.yaml
-
-
-      # --------------------------------------------------
-      # 12. Update Kubernetes deployment to exact version
-      # --------------------------------------------------
-      - name: Update Kubernetes Image
-        shell: powershell
-        run: |
-
-          Write-Host "Updating Kubernetes deployment to:"
-          Write-Host "jai842/sample-app:$env:VERSION"
-
-          kubectl set image deployment/sample-app `
-            nginx="jai842/sample-app:$env:VERSION"
 
 
       # --------------------------------------------------
@@ -348,17 +370,18 @@ jobs:
 
 
       # --------------------------------------------------
-      # 17. Commit updated VERSION file
+      # 17. Commit updated VERSION and deployment.yaml
       # --------------------------------------------------
-      - name: Commit VERSION
+      - name: Commit Release Files
         shell: powershell
         run: |
 
           git add VERSION
+          git add k8s/deployment.yaml
 
           if (git diff --cached --quiet) {
 
-              Write-Host "No VERSION changes to commit."
+              Write-Host "No release changes to commit."
 
           }
           else {
@@ -394,3 +417,4 @@ jobs:
 
           Write-Host ""
           Write-Host "========================================="
+```
