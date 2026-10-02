@@ -1,4 +1,4 @@
-```yaml
+
 name: Build Push and Deploy
 
 on:
@@ -417,4 +417,3 @@ jobs:
 
           Write-Host ""
           Write-Host "========================================="
-```
